@@ -1,3 +1,3 @@
-# My Awesome Book
+# <Python 绝技> 使用 Python 成为顶级黑客
 
-This file file serves as your book's preface, a great place to describe your book's content and ideas.
+这是阅读 <Python 绝技> 使用 Python 成为顶级黑客" 这本书时做的笔记

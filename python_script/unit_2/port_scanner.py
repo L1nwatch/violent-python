@@ -1,16 +1,3 @@
-# 第 2 章 用 Python 进行渗透测试
-
-## 编写一个端口扫描器
-
-Python 提供了访问 BSD 套接字的接口
-
-Web 服务器可能位于 TCP 80 端口、电子邮件服务器在 TCP 25 端口、FTP 服务器在 TCP 21 端口
-
-### TCP 全连接扫描
-
-为了抓取目标主机上应用的 Banner，找到开放的端口后，向它发送一个数据串并等待响应
-
-```python
 #!/bin/env python3
 # -*- coding: utf-8 -*-
 # version: Python3.X
@@ -58,7 +45,7 @@ def connect_scan(target_host, target_port):
         print("[+] Get Response: {}".format(results))
         conn_sock.close()
     except socket.timeout:
-        print("[-] {}/tcp closed".format(target_port))
+        print("[-] {}/tcp closed or No Response".format(target_port))
 
 
 def port_scan(target_host, target_ports):
@@ -90,21 +77,3 @@ def port_scan(target_host, target_ports):
 if __name__ == "__main__":
     host, port = initialize()
     port_scan(host, [port])
-
-```
-
-#### 线程扫描
-
-多线程可以提升速度，但是有一个缺点，屏幕打印消息可能会出现乱码和失序。因此需要信号量来进行加解锁，在打印消息前使用 `acquire()`，打印结束后使用 `release()`
-
-```python
-screen_lock = Semaphore(value=1)
-try:
-    screen_lock.acquire()
-    print("print anything")
-finally:
-    screen_lock.release()
-```
-
-#### 使用 NMAP 端口扫描代码
-
