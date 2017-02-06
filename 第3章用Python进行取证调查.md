@@ -86,3 +86,103 @@ def wigle_print(username, password, netid):
 
 ## 用 Python 恢复被删入回收站中的内容
 
+在使用 FAT 文件系统的 Windows 98 及之前的 Windows 系统中，回收站目录是 `C:\Recycled\`。在包括 Windows NT/2000 和 Windows XP 在内的支持 NTFS 的操作系统中，回收站是 `C:\Recycler\目录`。在 Windows Vista 和 Windows 7 中，回收站目录则是 `C:\$Recycle.Bin`
+
+### 使用 OS 模块寻找被删除的文件/文件夹
+
+依次测试各个文件夹即可，不是判断操作系统再来找对应文件夹
+
+```python
+import os
+def return_dir():
+    dirs = ["c:/Recycler/", "c:/Recycled/", "C:/$Recycle.Bin/"]
+    for recycle_dir in dirs:
+        if os.path.isdir(recycle_dir):
+            return recycle_dir
+    return None
+```
+
+在找到回收站目录之后，就要去检查其中的内容。其中有两个子目录，都含有字符串 `S-1-5-21-1275210071-1715567821-725345543-`，并分别以 1005 或 500 结尾。这个字符串表示的是用户的 SID，它对应的是机器里一个唯一的用户帐户
+
+### 用 Python 把 SID 和用户名关联起来
+
+可以用 Windows 注册表把 SID 转换成一个准确的用户名。检查的是注册表键 `HKEY_LOCAL_MACHINE\SOFT-WARE\Microsoft\Windows NT\CurrentVersion\ProfileList\<SID>\ProfileImagePath`，看到返回的是 `%SystemDrive%\Documents and Settings\<USERID>` 值。通过 `reg query` 命令，可以直接把 SID 转成用户名
+
+```shell
+C:\RECYCLER>reg query "HKEY_LOCAL...." /v ProfileImagePath
+```
+
+通过 Python 实现，打开注册表检查 ProfileImagePath 键，提取出其中存放的值，并返回位于用户路径中最后一个反斜杠之后的用户名
+
+```python
+from _winreg import *
+def sid2user(sid):
+    try:
+        key = OpenKey(HKEY_LOCAL_MACHINE, "SOFTWARE\Microsoft\Windows NT\CurrentVersion\ProfileList\{}".format(sid))
+        value, type = QueryValueEx(key, "ProfileImagePath")
+        user = value.split("\\")[-1]
+        return user
+    except:
+        return sid
+```
+
+## 元数据
+
+作为一种文件里非明显可见的对象，元数据可以存在于文档、电子表格、图片、音频和视频文件中。创建这些文件的应用程序可能会把文档的作者、创建和修改时间、可能的更新版本和注释这类详细信息存储下来。
+
+### 使用 PyPDF 解析 PDF 文件中的元数据
+
+PyPDF 允许提取文档中的内容，或对文档进行分割、合并、复制、加密和解密操作。若要提取元数据，可以使用 `.getDocumentInfo()` 方法，该方法会返回一个 tuple 数组，每个 tuple 中都含有对元数据元素的一个描述及它的值。逐一遍历这个数组，就能打印出 PDF 文档的所有元数据。
+
+```python
+import pyPdf
+from pyPdf import PdfFileReader
+def print_meta(file_name):
+    pdf_file = PdfFileReader(file(file_name, "rb"))
+    doc_info = pdf_file.getDocumentInfo()
+    print("[*] PDF MetaData For: {}".format(file_name))
+    for meta_item in doc_info:
+        print("[+] {}:{}".format(meta_item, doc_info[meta_item]))
+```
+
+### 理解 Exif 元数据
+
+Exif（exchange image file format，交换图像文件格式）标准定义了如何存储图像和音频文件的标准。
+
+Exif 标准中含有多个对取证调查非常有用的标签（tag），工具 `exiftool` 用它可以解析这些标签。
+
+### 用 BeautifulSoup 下载图片
+
+BeautifulSoup 允许我们快速解析 HTML 和 XML 文档
+
+实现查找所有 img 标签并下载：
+
+```python
+import urllib2
+from bs4 import BeautifuleSoup
+from urlparser import urlsplit
+from os.path import basename
+
+def find_images(url):
+    print("[+] Finding images on {}".format(url))
+    url_content = urllib2.urlopen(url).read()
+    soup = BeautifulSoup(url_content)
+    img_tags = soup.findAll("img")
+    return img_tags
+
+def download_image(img_tag):
+    try:
+        print("[+] Downloading image...")
+        img_src = img_tag["src"]
+        img_content = urllib2.urlopen(img_src).read()
+        img_file_name = basename(urlsplit(img_src)[2])
+        img_file = open(img_file_name, "wb")
+        img_file.write(img_content)
+        img_file.close()
+        return img_file_name
+    except:
+        return ""
+```
+
+### 用 Python 的图像处理库读取图片中的 Exif 元数据
+
