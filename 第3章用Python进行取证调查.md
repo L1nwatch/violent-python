@@ -186,3 +186,88 @@ def download_image(img_tag):
 
 ### 用 Python 的图像处理库读取图片中的 Exif 元数据
 
+利用 PIL 库提取 GPS 元数据：
+
+```python
+from PIL import Image
+from PIL.ExifTags import  TAGS
+
+def test_for_exif(image_file_name):
+    try:
+        exif_data = {}
+        img_file = Image.open(image_file_name)
+        info = img_file._getexif()
+        if info:
+            for tag, value in info.items():
+                decoded = TAGS.get(tag, tag)
+                exif_data[decoded] = value
+            exif_gps = exif_data["GPSINFO"]
+            if exif_gps:
+                print("[*] {} contains GPS MetaData".format(img_file_name))
+    except:
+        pass
+```
+
+## 用 Python 分析应用程序的使用记录
+
+### 理解 Skype 中的 SQLite3 数据库
+
+在 Windows 系统中，Skype 在 `C:\Documents and Settings\<User>\ApplicationData\Skype\<Skype-account>` 目录中存储了一个名为 `main.db` 的数据库。在 macOS 系统中，这个数据库的存储路径为 `/Users/<User>/Library/Application Support/Skype/<Skype-account>`
+
+连接 SQLite3 数据库后 `SELECT tbl_name FROM sqlite_master WHERE type=='table'`，SQLite 数据库维护一张名为 `sqlite_master` 的表，这张表中含有一个名为 `tbl_name` 的列，其中描述了数据库中的各张表。
+
+Accounts 表记录了使用该应用程序的用户账户的相关信息，其中的各列记录了用户名、Skype 的昵称、用户的位置和创建该账户的日期等信息。
+
+数据库是以 UNIX 时间格式存储账户创建时间的，SQL 方法 `datetime()` 可以把这个值转换成更方便阅读的格式
+
+### 使用 Python 和 SQLite3 自动查询 Skype 的数据库
+
+```python
+import sqlite3
+def print_profile(skype_db):
+    conn = sqlite3.connect(skype_db)
+    c = conn.cursor()
+    c.execute("SELECT fullname, skypename, city, country, datetime(profile_timestamp, 'unixepoch') FROM Accounts;")
+    for row in c:
+        print("[*] -- Found Account --")
+        print("[+] User: {}".format(row[0]))
+        print("[+] Skype Username: {}".format(row[1]))
+        print("[+] Location: {},{}".format(row[2], row[3]))
+        print("[+] Profile Date: {}".format(row[4]))
+```
+
+多表处理：
+
+```python
+def print_call_log(skype_db):
+    conn = sqlite3.connect(skype_db)
+    c = conn.cursor()
+    c.execute("SELECT datetime(begin_timestamp, 'unixepoch'), identity FROM calls, conversations WHERE calls.conv_dbid = conversations.id;")
+    print("[*] -- Found Calls --")
+    for row in c:
+        print("[+] Time: {} | partner: {}".format(row[0], row[1]))
+```
+
+Skype 的数据库会把所有发送和收到的消息都保存在数据库中。数据库中把这些信息存放在一张名为 `Messages` 的表中。从这张表中用 SELECT 语句选出 timestamp、`dialog_partner`、author 和 `body_xml`。注意，如果 `dialog_partner` 和 author 字段是不一样的，那么就是数据库的所有者发送这条消息给 `dialog_partner` 的。反之，如果 `dialog_partner` 和 author 字段是一样的，就是 `dialog_partner` 发送的这条消息，这时需要在消息前加一个 `from`
+
+```python
+def print_messages(skype_db):
+    conn = sqlite3.connect(skype_db)
+    c = conn.cursor()
+    c.execute("SELECT datetime(timestamp, 'unixepoch'), dialog_partner, author, body_xml FROM Messages;")
+    print("[*] -- Found Messages --")
+    for row in c:
+        try:
+            if "partlist" not in str(row[3]):
+                if str(row[1]) != str(row[2]):
+                    msg_direction = "To {}: ".format(row[1])
+        	else:
+            	msg_direction = "From {}: ".format(row[2])
+            print("Time: {} {} {}".format(row[0], msg_direction, row[3]))
+        except:
+            pass
+```
+
+### 其他有用的一些 Skype 查询语句
+
+pass
