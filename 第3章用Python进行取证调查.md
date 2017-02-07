@@ -270,4 +270,85 @@ def print_messages(skype_db):
 
 ### 其他有用的一些 Skype 查询语句
 
-pass
+只想打印出联系人列表中其生日不为空的联系人：
+
+```sql
+SELECT fullname, birthday FROM contacts WHERE birthday > 0;	
+```
+
+只想输出 conversation 表中只与某个特定的 `<SKYPE-PARTNER>` 相关的通话记录：
+
+```sql
+SELECT datetime(timestamp, 'unixepoch'), dialog_partner, author, body_xml, FROM Messages WHERE dialog_partner='<SKYPE-PARTNER>'
+```
+
+要删除 conversation 表中只与某个特定的 `<SKYPE-PARTNER>` 相关的通话记录
+
+```sql
+DELETE FROM messages WHERE skypename='<SKYPE-PARTNER>'
+```
+
+### 用 Python 解析火狐浏览器的 SQLite3 数据库
+
+在 Windows 操作系统中，火狐把这些数据库存放在 `"C:/Documents and Settings/<USER>/Application Data/Mozilla/Firefox/Profiles/<profile folder>/"` 目录中，在 macOS 系统中，火狐把这些数据库存放在 `"/Users/<USER>/Library/Application Support/Firefox/Profiles/<profile folder>"` 目录中
+
+文件 `downloads.sqlite` 数据库时火狐用户下载文件的相关信息。其中只有一张名为 `moz_downloads` 的表记录了文件名、源下载地址、下载时间、文件大小、引用（referrer）和本地存放该文件的路径。
+
+```python
+import sqlite3
+def print_downloads(download_db):
+    conn = sqlite3.connect(download_db)
+    c = conn.cursor()
+    c.execute("SELECT name, source, datetime(endTime/1000000, 'unixepoch') FROM moz_downloads;")
+    print("[*] --- Files Downloaded ---")
+    for row in c:
+        print("[+] File: {} from source: {} at: {}".format(row[0], row[1], row[2]))
+```
+
+数据库 `moz_cookies` 表中保存的是 cookie 相关的数据。
+
+```python
+def print_cookies(cookies_db):
+    try:
+        conn = sqlite3.connect(cookie_db)
+        c = conn.cursor()
+        c.execute("SELECT host, name, value FROM moz_cookies")
+        print("[*] --- Found Cookies ---")
+        for row in c:
+            host = row[0]
+            name = row[1]
+            value = row[2]
+            print("[+] Host: {}, Cookie: {}, Value: {}".format(host, name, value))
+    except Exception as e:
+        if "encrypted" in str(e):
+            print("[*] Error reading your cookies database.")
+            print("[*] Upgrade your Python-Sqlite3 Library")
+```
+
+上网历史记录保存在 `places.sqlite` 的数据库中，其中的 `moz_places` 表可以给出关于用户在何时（时间）访问了何处（地址）的网站信息。ForensicWiki 网站上建议使用 `moz_places` 和 `moz_historyvisits` 表中的数据，以获取一张真正的浏览器上网历史记录。
+
+```sql
+SELECT url, datetime(visit_date/1000000, 'unixepoch') FROM moz_places, moz_historyvisits WHERE visit_count > 0 AND moz_places.id == moz_historyvisits.place_id;
+```
+
+### 用 Python 调查 iTunes 的手机备份
+
+苹果的 iOS 操作系统实际上会跟踪和记录设备的 GPS 经纬度信息，并把它们存储在 `consolidated.db` 的数据库中。其中有一张名为 `Cell-Location` 的表，其中含有手机已经收集到的 GPS 定位点。在备份移动设备时，记录到计算机的移动设备的副本也含有这一信息。尽管 iOS 操作系统设计的功能会删除这些地理位置信息，但调查发现这些数据仍然存在。
+
+当用户对 iPhone/iPad 设备进行备份时，它会把相关文件存放到计算机中一个特定的目录中。在 Windows 操作系统中，iTunes 应用程序会把数据存放在用户目录下的移动设备备份目录中（`C:/Documents and Settings/<USERNAME>/Application Data/AppleComputer/MobileSync/Backup`），而在 macOS 中，这个目录则是 `/Users/<USERNAME>/Library/Application Support/MobileSync/Backup/`。对移动设备进行备份的 iTunes 程序会把所有的设备备份文件都存放在这个目录中。
+
+为了获取关于文件的信息，用 UNIX 命令 `file` 来分析各个文件的文件类型。可以看到移动设备备份目录中有一些 SQLite3 数据库文件、JPEG 图片文件、纯二进制文件和 ASCII 文本文件
+
+可以用脚本快速列举出在整个移动设备备份目录中每一个数据库中所有表的表名：
+
+```sql
+SELECT tbl_name FROM sqlite_master WHERE type=="table"
+```
+
+每个 SQLite 数据库中都会维护一张名为 `sqlite_master` 的表，其中含有整个数据库结构的信息，记录了整个数据库中各张表的结构。
+
+含有 `message` 表的库即为文本消息数据库，可以把发送时间、对方手机号码以及消息本身打印出来：
+
+```sql
+SELECT datetime(date, 'unixepoch'), address, text FROM message WHERE address > 0;
+```
