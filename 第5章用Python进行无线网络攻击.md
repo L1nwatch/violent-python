@@ -410,3 +410,116 @@ register({
 
 ### 理解 WordPress 的会话 cookies
 
+攻击者在火狐 3.6.24 上运行 Firesheep 工具包，可以发现一些类似的字符串通过无线网络以不加密的方式被发送出来。
+
+### 牧羊人——找出 Wordpress Cookie 重放攻击
+
+编写一个 Python 脚本解析含有这些会话 cookie 的 Wordpress HTTP 会话。
+
+```python
+import re
+from scapy.all import *
+def fire_catcher(pkt):
+    raw = pkt.sprintf("%Raw.load%")
+    r = re.findall("wordpress_[0-9a-fA-F]{32}", raw)
+    if r and "Set" not in raw:
+        print("{}>{} Cookie: {}".format(pkt.getlayer(IP).src, pkt.getlayer(IP).dst, r[0]))
+conf.iface = "mon0"
+sniff(filter="tcp port 80", prn=fire_catcher)
+```
+
+为了找出使用火绵羊的黑客，要确认的是攻击者在不同的 IP 地址上重复使用这些 cookie 值。为了检测出这一情况，要修改之前的脚本。
+
+```python
+import re
+import optparse
+from scapy.all import *
+cookie_table = {}
+def fire_catcher(pkt):
+    raw = pkt.sprintf("%Raw.load%")
+    r = re.findall("wordpress_[0-9a-fA-F]{32}", raw)
+    if r and "Set" not in raw:
+        if r[0] not in cookie_table.keys():
+            cookie_table[r[0]] = pkt.getlayer(IP).src
+            print("[+] Detected and indexed cookie.")
+        elif cookie_table[r[0]] != pkt.getlayer(IP).src:
+            print("[*] Detected Conflict for {}".format(r[0]))
+            print("Victim = {}".format(cookie_table[r[0]]))
+            print("Attacker = {}".format(pkt.getlayer(IP).src))
+            
+def main():
+    parser = optparse.OptionParser("usage %prog -i<interface>")
+    parser.add_option("-i", dest="interface", type="string", help="specify interface to listen on")
+    options, args = parser.parse_args()
+    if options.interface == None:
+        print(parser.usage)
+        exit(-1)
+    else:
+        conf.iface = options.interface
+    try:
+        sniff(filter="tcp port 80", prn=fire_catcher)
+    except KeyboardInterrupt:
+        exit(0)
+```
+
+### 用 Python 搜寻蓝牙
+
+为了能与蓝牙资源进行交互操作，需要 PyBluez 这个 Python 模块。该模块扩展了用于使用蓝牙资源的 Bluez 库的功能。注意，当调用 `discover_devices()` 之后就会把附近所有当前处于“可被发现”状态下的蓝牙设备的 MAC 地址放在一个列表中返回来。`lookup_name()` 可以将各个蓝牙设备的 MAC 地址转换成方便阅读的字符串。
+
+```python
+from bluetooth import *
+dev_list = discover_devices()
+for device in dev_list:
+    name = str(lookup_name(device))
+    print("[+] Found Bluetooth Device {}".format(str(name)))
+    print("[+] MAC address: {}".format(str(device)))
+```
+
+创建一个无限循环来检测：
+
+```python
+import time
+from bluetooth import *
+already_found = list()
+def find_devs():
+    found_devs = discover_devices(lookup_names=True)
+    for addr, name in found_devs:
+        if addr not in already_found:
+            print("[*] Found Bluetooth Device: {}".format(name))
+            print("[+] MAC address: {}".format(addr))
+            already_found.append(addr)
+            
+while True:
+    find_devs()
+    time.sleep(5)
+```
+
+### 截取无限流量，查找（隐藏的）蓝牙设备地址
+
+在 iPhone 里，把无线网卡的 MAC 地址加 1，就得到了这台 iPhone 的蓝牙 MAC。由于 802.11 无线协议在第 2 层中没有使用能够保护 MAC 地址的措施，所以可以很方便地嗅探到它，然后使用该信息来计算蓝牙的 MAC 地址。
+
+来设置一个嗅探无线网卡的 MAC 地址。注意，只要 MAC 地址的前三个十六进制数 MAC 地址的前三个八位字节的 MAC 地址。前三个十六进制数是一个 OUI（Organizational Unique Identifier，组织唯一标识符），它表示的是设备制造商，你可以查询 OUI 数据库获取进一步的信息。
+
+```python
+from scapy.all import *
+def wifi_print(pkt):
+    iPhone_OUI = "d0:23:db"
+    if pkt.haslayer(Dot11):
+        wifi_mac = pkt.getlayer(Dot11).addr2
+        if iPhone_OUI == wifi_mac[:8]:
+            print("[*] Detected iPhone MAC: {}".format(wifi_mac))
+conf.iface = "mon0"
+sniff(prn=wifi_print)
+```
+
+有了 MAC 地址后，攻击者就可以发起一个设备名称查询来确认这个设备是否真的存在。即便是在“不可被发现”模式下，蓝牙设备仍会响应设备名称的查询请求。
+
+```python
+def check_bluetooth(bt_addr):
+    bt_name = lookup_name(bt_addr)
+    if bt_name:
+        print("[+] Detected Bluetooth Device: {}".format(bt_name))
+    else:
+        print("[-] Failed to Detect Bluetooth Device.")
+```
+
